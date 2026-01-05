@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Word Burst Buddies</title>
+<style>
+body { font-family: "Comic Sans MS", sans-serif; text-align:center; background:#f0f8ff; color:#333;}
+h1 { color:#ff4500;}
+input, button { padding:10px; margin:5px; font-size:16px; border-radius:10px; border:2px solid #ff4500; cursor:pointer;}
+input:disabled { background:#eee; }
+#playersList { list-style:none; padding:0; margin-bottom:10px; }
+li.active { color:green; font-weight:bold;}
+li.eliminated { color:red; text-decoration:line-through;}
+#prompt { font-size:48px; color:#ff4500; font-weight:bold;}
+#timeLeft { font-size:36px; color:#1e90ff; font-weight:bold;}
+#leaderboard { margin-top:20px; background:#fff0f5; padding:10px; border-radius:10px; text-align:left; display:inline-block;}
+</style>
+</head>
+<body>
+<h1>Word Burst Buddies</h1>
+
+<div id="lobby">
+  <input id="nameInput" placeholder="Enter your name"/>
+  <input id="roomCodeInput" placeholder="Game code (optional)" maxlength="4"/>
+  <button id="joinBtn">Join Game</button>
+  <button id="randomBtn">Join Random Game</button>
+  <button id="readyBtn">Ready / Start Game</button>
+  <p id="roomDisplay"></p>
+</div>
+
+<div id="gameArea" style="display:none;">
+  <h2>Current Prompt: <span id="prompt">---</span></h2>
+  <h3>Time left: <span id="timeLeft">0</span> sec</h3>
+  <input id="wordInput" placeholder="Type a word (min 3 letters)"/>
+  <button id="submitWordBtn">Submit Word</button>
+
+  <h2>Players</h2>
+  <ul id="playersList"></ul>
+
+  <!-- Leaderboards below players -->
+  <div id="leaderboard"></div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
