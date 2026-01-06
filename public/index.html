@@ -4,41 +4,117 @@
 <meta charset="UTF-8">
 <title>Word Burst Buddies</title>
 <style>
-body { font-family: "Comic Sans MS", sans-serif; text-align:center; background:#f0f8ff; color:#333;}
-h1 { color:#ff4500;}
-input, button { padding:10px; margin:5px; font-size:16px; border-radius:10px; border:2px solid #ff4500; cursor:pointer;}
-input:disabled { background:#eee; }
-#playersList { list-style:none; padding:0; margin-bottom:10px; }
-li.active { color:green; font-weight:bold;}
-li.eliminated { color:red; text-decoration:line-through;}
-#prompt { font-size:48px; color:#ff4500; font-weight:bold;}
-#timeLeft { font-size:36px; color:#1e90ff; font-weight:bold;}
-#leaderboard { margin-top:20px; background:#fff0f5; padding:10px; border-radius:10px; text-align:left; display:inline-block;}
+body {
+  font-family: "Arial", sans-serif;
+  margin: 0;
+  padding: 0;
+  background: #f0f8ff;
+  color: #333;
+}
+h1 {
+  text-align: center;
+  color: #ff4500;
+  margin-top: 20px;
+}
+input, button {
+  padding: 8px 12px;
+  margin: 5px;
+  font-size: 14px;
+  border-radius: 8px;
+  border: 2px solid #ff4500;
+}
+button {
+  cursor: pointer;
+}
+#playersList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+li {
+  padding: 5px 0;
+  border-bottom: 1px solid #ddd;
+}
+li.active {
+  background: #d0f0d0;
+  font-weight: bold;
+}
+li.eliminated {
+  color: #999;
+  text-decoration: line-through;
+}
+#prompt {
+  font-size: 48px;
+  color: #ff4500;
+  font-weight: bold;
+  margin: 20px 0;
+}
+#timeLeft {
+  font-size: 32px;
+  color: #1e90ff;
+  font-weight: bold;
+  margin-bottom: 20px;
+}
+.game-container {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 20px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+#gameArea {
+  flex: 1;
+  max-width: 500px;
+}
+#leaderboard {
+  flex: 0 0 250px;
+  background: #fff0f5;
+  padding: 15px;
+  border-radius: 10px;
+}
+#roomDisplay {
+  font-weight: bold;
+  margin-top: 10px;
+}
+#note {
+  font-size: 14px;
+  margin-top: 10px;
+  color: #333;
+}
 </style>
 </head>
 <body>
+
 <h1>Word Burst Buddies</h1>
 
 <div id="lobby">
   <input id="nameInput" placeholder="Enter your name"/>
   <input id="roomCodeInput" placeholder="Game code (optional)" maxlength="4"/>
+  <br>
   <button id="joinBtn">Join Game</button>
   <button id="randomBtn">Join Random Game</button>
   <button id="readyBtn">Ready / Start Game</button>
   <p id="roomDisplay"></p>
 </div>
 
-<div id="gameArea" style="display:none;">
-  <h2>Current Prompt: <span id="prompt">---</span></h2>
-  <h3>Time left: <span id="timeLeft">0</span> sec</h3>
-  <input id="wordInput" placeholder="Type a word (min 3 letters)"/>
-  <button id="submitWordBtn">Submit Word</button>
+<div class="game-container" style="display:none;" id="gameContainer">
+  <div id="gameArea">
+    <h2>Current Prompt:</h2>
+    <div id="prompt">---</div>
+    <h3>Time Left: <span id="timeLeft">0</span> sec</h3>
+    <input id="wordInput" placeholder="Type a word (min 3 letters)" style="width:80%"/>
+    <button id="submitWordBtn">Submit Word</button>
 
-  <h2>Players</h2>
-  <ul id="playersList"></ul>
+    <h2>Players</h2>
+    <ul id="playersList"></ul>
 
-  <!-- Leaderboards below players -->
-  <div id="leaderboard"></div>
+    <div id="note">After each game, press "Join Random Game" or enter a code, then click Ready to play again.</div>
+  </div>
+
+  <div id="leaderboard">
+    <!-- Leaderboards will render here -->
+  </div>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
