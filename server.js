@@ -124,7 +124,7 @@ function checkWinner(roomCode) {
 
     io.to(roomCode).emit("gameOver", { winner: winner.name, leaderboard });
 
-    // Reset room and players
+    // --- Reset room and players ---
     room.gameStarted = false;
     clearInterval(room.timerInterval);
     Object.values(room.players).forEach(p => { p.ready = false; p.startPressed = false; });
@@ -136,6 +136,7 @@ function checkWinner(roomCode) {
     room.playerOrder = [];
     room.currentPlayerIndex = -1;
 
+    // Reset the random room code so a new game will have a fresh code
     if (currentRandomRoom === roomCode) currentRandomRoom = null;
   }
 }
@@ -188,12 +189,20 @@ io.on("connection", (socket) => {
     // --- Start game if everyone in queue pressed Ready the second time ---
     const allReady = room.queue.length >= 2 && room.queue.every(id => room.players[id].startPressed);
     if (!room.gameStarted && allReady) {
+
+      // --- Generate a new random room code for the next game ---
+      if (currentRandomRoom === room.socket?.roomCode || currentRandomRoom === socket.roomCode) {
+        currentRandomRoom = generateRoomCode();
+        rooms[currentRandomRoom] = { players: {}, playerOrder: [], queue: [], gameStarted: false, timer: startingTimer };
+      }
+
       room.gameStarted = true;
       room.playerOrder = [...room.queue];
       room.queue = [];
       room.currentPlayerIndex = -1;
       room.timer = startingTimer;
       Object.values(room.players).forEach(p => { p.ready = false; p.startPressed = false; });
+
       nextTurn(socket.roomCode);
     }
   });
