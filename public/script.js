@@ -18,11 +18,26 @@ const gameContainer = document.getElementById("gameContainer");
 const lobby = document.getElementById("lobby");
 const leaderboardDiv = document.getElementById("leaderboard");
 
+// Waiting screen
+const waitingScreen = document.createElement("div");
+waitingScreen.id = "waitingScreen";
+waitingScreen.style.display = "none";
+waitingScreen.style.textAlign = "center";
+waitingScreen.style.marginTop = "50px";
+waitingScreen.innerHTML = `
+  <h2>Lobby - Waiting to Start</h2>
+  <div id="queueRoomCode" style="font-weight:bold; margin-bottom:10px;"></div>
+  <ul id="waitingPlayersList"></ul>
+`;
+document.body.appendChild(waitingScreen);
+
 let myId = "";
 let activePlayerId = "";
+let myRoomCode = "";
 
 socket.on("connect", () => { myId = socket.id; });
 
+// Join room
 joinBtn.onclick = () => {
   const name = nameInput.value.trim();
   const code = roomCodeInput.value.trim();
@@ -36,11 +51,16 @@ randomBtn.onclick = () => {
   socket.emit("joinRoom", { name, random: true });
 };
 
-readyBtn.onclick = () => { socket.emit("playerReady"); };
+// Ready → enter queue
+readyBtn.onclick = () => {
+  lobby.style.display = "none";
+  waitingScreen.style.display = "block";
+  socket.emit("playerReady");
+};
 
+// Submit guess
 submitWordBtn.onclick = submitWord;
 wordInput.addEventListener("keydown", e => { if(e.key==="Enter") submitWord(); });
-
 function submitWord() {
   if (myId !== activePlayerId) { alert("Not your turn!"); return; }
   const word = wordInput.value.trim();
@@ -49,23 +69,43 @@ function submitWord() {
   wordInput.value = "";
 }
 
-socket.on("lobbyInfo", ({ roomCode }) => { roomDisplay.textContent = `Room: ${roomCode}`; });
+// Lobby info → show room code
+socket.on("lobbyInfo", ({ roomCode }) => {
+  roomDisplay.textContent = `Room Code: ${roomCode}`;
+  myRoomCode = roomCode;
+  document.getElementById("queueRoomCode").textContent = `Room Code: ${myRoomCode}`;
+});
 
-socket.on("updatePlayers", players => {
-  playersList.innerHTML = "";
-  for (const id in players) {
+// Update queue display
+socket.on("updateQueue", (players, queue) => {
+  const list = document.getElementById("waitingPlayersList");
+  list.innerHTML = "";
+  queue.forEach(id => {
     const p = players[id];
     const li = document.createElement("li");
-    li.textContent = `${p.name} - Lives: ${p.lives}`;
-    li.className = "";
-    if (id === activePlayerId) li.classList.add("active");
-    if (p.lives <= 0) li.classList.add("eliminated");
-    playersList.appendChild(li);
+    li.textContent = p.name + (p.startPressed ? " ✅" : "");
+    list.appendChild(li);
+  });
+
+  // Show start game button for 2+ players
+  if (queue.length > 1) {
+    if (!document.getElementById("startGameBtn")) {
+      const btn = document.createElement("button");
+      btn.id = "startGameBtn";
+      btn.textContent = "Start Game";
+      btn.style.marginTop = "20px";
+      btn.onclick = () => { socket.emit("startPressed"); btn.disabled = true; };
+      waitingScreen.appendChild(btn);
+    }
+  } else {
+    const existing = document.getElementById("startGameBtn");
+    if (existing) existing.remove();
   }
 });
 
+// Game starts
 socket.on("newPrompt", ({ prompt, timer, activePlayer }) => {
-  lobby.style.display = "none";
+  waitingScreen.style.display = "none";
   gameContainer.style.display = "flex";
 
   activePlayerId = activePlayer;
@@ -77,10 +117,11 @@ socket.on("newPrompt", ({ prompt, timer, activePlayer }) => {
   submitWordBtn.disabled = !isMyTurn;
 });
 
+// Timer & lifeLost
 socket.on("timer", time => { timeDisplay.textContent = time; });
-
 socket.on("lifeLost", ({ reason, lives }) => { alert(`${reason}. Lives left: ${lives}`); });
 
+// Game over
 socket.on("gameOver", ({ winner, leaderboard }) => {
   alert(`${winner} wins!`);
   lobby.style.display = "block";
@@ -88,8 +129,8 @@ socket.on("gameOver", ({ winner, leaderboard }) => {
   renderLeaderboard(leaderboard);
 });
 
+// Leaderboard
 socket.on("leaderboardUpdate", board => { renderLeaderboard(board); });
-
 function renderLeaderboard(lb) {
   leaderboardDiv.innerHTML = `
     <h3>Wins</h3>
@@ -98,7 +139,6 @@ function renderLeaderboard(lb) {
     ${top5(lb,"longestWord",true)}
   `;
 }
-
 function top5(lb,key,showWord=false) {
   return Object.entries(lb)
     .sort((a,b)=> (b[1][key]||0)-(a[1][key]||0))
