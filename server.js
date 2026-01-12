@@ -17,7 +17,7 @@ fs.readFile(path.join(__dirname, "public", "words.txt"), "utf8", (err, data) => 
   }
 });
 
-// Load or create leaderboard
+// Leaderboard
 let leaderboard = {};
 const leaderboardPath = path.join(__dirname, "leaderboard.json");
 if (fs.existsSync(leaderboardPath)) {
@@ -27,14 +27,16 @@ if (fs.existsSync(leaderboardPath)) {
 }
 
 // Game settings
-const minTimer = 5;
 const startingTimer = 15;
-const timerDecrease = 1;
+const minTimer = 5;
 const combos = [
-  // Original simple clusters
-  "BA","CA","DA","MA","PA","RA","TA","BE","BI","BO","BU","LA","LE","LI","LO","AN","IN","ON","UN","BL","CL","FL","GL","PL","SL","BR","CR","DR","FR","GR","PR","TR","SC","SK","SL","SM","SN","SP","ST","SW","WH","WR"];
+  "BA","CA","DA","MA","PA","RA","TA","BE","BI","BO","BU","LA","LE","LI","LO",
+  "AN","IN","ON","UN","BL","CL","FL","GL","PL","SL","BR","CR","DR","FR","GR",
+  "PR","TR","SC","SK","SL","SM","SN","SP","ST","SW","WH","WR"
+];
 
-const rooms = {}; // roomCode -> { players, playerOrder, currentPlayerIndex, gameStarted, timer, timerInterval, currentPrompt, activePlayerId }
+const rooms = {}; 
+let currentRandomRoom = null; 
 
 function generateRoomCode() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -43,20 +45,16 @@ function generateRoomCode() {
   return code;
 }
 
-// Start next turn
+// --- Start next turn ---
 function nextTurn(roomCode) {
   const room = rooms[roomCode];
   if (!room || !room.gameStarted || room.playerOrder.length === 0) return;
-
-  // Increment current player index
   room.currentPlayerIndex = (room.currentPlayerIndex + 1) % room.playerOrder.length;
   const activeId = room.playerOrder[room.currentPlayerIndex];
   room.activePlayerId = activeId;
-
   startPrompt(roomCode);
 }
 
-// Start prompt for active player
 function startPrompt(roomCode) {
   const room = rooms[roomCode];
   if (!room || !room.gameStarted || room.playerOrder.length === 0) return;
@@ -65,14 +63,12 @@ function startPrompt(roomCode) {
   const activeId = room.playerOrder[room.currentPlayerIndex];
   room.activePlayerId = activeId;
 
-  // Emit prompt and timer
   io.to(roomCode).emit("newPrompt", {
     prompt: room.currentPrompt,
     timer: room.timer,
     activePlayer: activeId
   });
 
-  // Update player list highlighting
   io.to(roomCode).emit("updatePlayers", room.players);
 
   clearInterval(room.timerInterval);
@@ -85,9 +81,20 @@ function startPrompt(roomCode) {
 
     if (timeLeft <= 0) {
       clearInterval(room.timerInterval);
+
       const player = room.players[activeId];
       if (player) {
         player.lives--;
+
+        // Notify the player who lost the life
+        const s = io.sockets.sockets.get(activeId);
+        if (s) {
+          s.emit("lifeLost", {
+            reason: "Time ran out!",
+            lives: player.lives
+          });
+        }
+
         if (player.lives <= 0) {
           delete room.players[activeId];
           room.playerOrder = room.playerOrder.filter(id => id !== activeId);
@@ -95,86 +102,95 @@ function startPrompt(roomCode) {
       }
 
       io.to(roomCode).emit("updatePlayers", room.players);
-
       checkWinner(roomCode);
       nextTurn(roomCode);
     }
   }, 1000);
 }
 
-// Check winner
+// --- Check winner and reset room ---
 function checkWinner(roomCode) {
   const room = rooms[roomCode];
   if (!room) return;
+
   const remaining = Object.values(room.players).filter(p => p.lives > 0);
+
   if (remaining.length === 1) {
     const winner = remaining[0];
+
     if (!leaderboard[winner.name]) leaderboard[winner.name] = { longestWord: 0, longestWordText: "", wins: 0 };
     leaderboard[winner.name].wins += 1;
     fs.writeFileSync(leaderboardPath, JSON.stringify(leaderboard, null, 2));
 
     io.to(roomCode).emit("gameOver", { winner: winner.name, leaderboard });
+
+    // Reset room and players
     room.gameStarted = false;
     clearInterval(room.timerInterval);
-
-    // Reset all players' ready status for next game
-    Object.values(room.players).forEach(p => p.ready = false);
+    Object.values(room.players).forEach(p => { p.ready = false; p.startPressed = false; });
+    Object.keys(room.players).forEach(id => {
+      const s = io.sockets.sockets.get(id);
+      if (s) s.roomCode = null;
+    });
+    room.queue = [];
+    room.playerOrder = [];
     room.currentPlayerIndex = -1;
+
+    if (currentRandomRoom === roomCode) currentRandomRoom = null;
   }
 }
 
+// --- Socket.io ---
 io.on("connection", (socket) => {
   console.log("User connected", socket.id);
 
   socket.on("joinRoom", ({ name, code, random }) => {
     let roomCode;
+
     if (random) {
-      roomCode = Object.keys(rooms).find(rc => !rooms[rc].gameStarted && rooms[rc].playerOrder.length < 7 && rooms[rc].playerOrder.length > 0);
-      if (!roomCode) {
-        roomCode = generateRoomCode();
-        rooms[roomCode] = { players: {}, playerOrder: [], currentPlayerIndex: -1, gameStarted: false, timer: startingTimer };
+      if (!currentRandomRoom || rooms[currentRandomRoom].playerOrder.length >= 7) {
+        currentRandomRoom = generateRoomCode();
+        rooms[currentRandomRoom] = { players: {}, playerOrder: [], queue: [], gameStarted: false, timer: startingTimer };
       }
+      roomCode = currentRandomRoom;
     } else {
       roomCode = code.toUpperCase();
-      if (!rooms[roomCode]) rooms[roomCode] = { players: {}, playerOrder: [], currentPlayerIndex: -1, gameStarted: false, timer: startingTimer };
-    }
-
-    if (rooms[roomCode].playerOrder.length >= 7) {
-      socket.emit("roomFull");
-      return;
+      if (!rooms[roomCode]) rooms[roomCode] = { players: {}, playerOrder: [], queue: [], gameStarted: false, timer: startingTimer };
     }
 
     socket.join(roomCode);
-    rooms[roomCode].players[socket.id] = { name, lives: 3, ready: false };
-    rooms[roomCode].playerOrder.push(socket.id);
+    rooms[roomCode].players[socket.id] = { name, lives: 3, ready: false, startPressed: false };
     socket.roomCode = roomCode;
 
-    io.to(roomCode).emit("updatePlayers", rooms[roomCode].players);
-    io.to(roomCode).emit("lobbyInfo", { roomCode });
+    io.to(socket.id).emit("lobbyInfo", { roomCode });
     io.emit("leaderboardUpdate", leaderboard);
   });
 
   socket.on("playerReady", () => {
     const room = rooms[socket.roomCode];
     if (!room || !room.players[socket.id]) return;
-    room.players[socket.id].ready = true;
+    if (!room.queue.includes(socket.id)) room.queue.push(socket.id);
+    io.to(socket.roomCode).emit("updateQueue", room.players, room.queue);
+  });
 
-    const readyCount = Object.values(room.players).filter(p => p.ready).length;
+  socket.on("startPressed", () => {
+    const room = rooms[socket.roomCode];
+    if (!room || !room.players[socket.id]) return;
 
-    // Start game if minimum 2 players ready
-    if (!room.gameStarted && readyCount >= 2 && Object.values(room.players).every(p => p.ready)) {
+    room.players[socket.id].startPressed = true;
+    io.to(socket.roomCode).emit("updateQueue", room.players, room.queue);
+
+    const allPressed = room.queue.length > 1 &&
+                       room.queue.every(id => room.players[id].startPressed);
+    if (!room.gameStarted && allPressed) {
       room.gameStarted = true;
+      room.playerOrder = [...room.queue];
+      room.queue = [];
       room.currentPlayerIndex = -1;
       room.timer = startingTimer;
-
-      // Reset ready status
-      Object.values(room.players).forEach(p => p.ready = false);
-
-      // Start first turn
+      Object.values(room.players).forEach(p => { p.startPressed = false; p.ready = false; });
       nextTurn(socket.roomCode);
     }
-
-    io.to(socket.roomCode).emit("updatePlayers", room.players);
   });
 
   socket.on("submitWord", (word) => {
@@ -186,14 +202,20 @@ io.on("connection", (socket) => {
     const player = room.players[socket.id];
     const submittedWord = word.toUpperCase();
 
-    if (submittedWord.length < 3 || !submittedWord.includes(room.currentPrompt) || !englishWords.has(submittedWord)) {
+    const tooShort = submittedWord.length < 3;
+    const missingCombo = !submittedWord.includes(room.currentPrompt);
+    const notEnglish = !englishWords.has(submittedWord);
+
+    if (tooShort || missingCombo || notEnglish) {
       player.lives--;
+
       socket.emit("lifeLost", {
-        reason: !englishWords.has(submittedWord) ? "Not a valid English word" :
-                !submittedWord.includes(room.currentPrompt) ? "Does not include the prompt" :
+        reason: notEnglish ? "Not a valid English word" :
+                missingCombo ? `Must include: ${room.currentPrompt}` :
                 "Too short",
         lives: player.lives
       });
+
       if (player.lives <= 0) {
         delete room.players[socket.id];
         room.playerOrder = room.playerOrder.filter(id => id !== socket.id);
@@ -204,6 +226,10 @@ io.on("connection", (socket) => {
         leaderboard[player.name].longestWord = submittedWord.length;
         leaderboard[player.name].longestWordText = submittedWord;
       }
+
+      // --- Dynamic timer shortening ---
+      const aliveCount = Object.values(room.players).filter(p => p.lives > 0).length;
+      room.timer = Math.max(minTimer, room.timer - 1 / aliveCount);
     }
 
     fs.writeFileSync(leaderboardPath, JSON.stringify(leaderboard, null, 2));
@@ -220,7 +246,8 @@ io.on("connection", (socket) => {
     if (!room) return;
     delete room.players[socket.id];
     room.playerOrder = room.playerOrder.filter(id => id !== socket.id);
-    io.to(socket.roomCode).emit("updatePlayers", room.players);
+    room.queue = room.queue.filter(id => id !== socket.id);
+    io.to(socket.roomCode).emit("updateQueue", room.players, room.queue);
   });
 });
 
