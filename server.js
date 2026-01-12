@@ -166,13 +166,18 @@ io.on("connection", (socket) => {
     io.emit("leaderboardUpdate", leaderboard);
   });
 
+  // --- First ready: join queue ---
   socket.on("playerReady", () => {
     const room = rooms[socket.roomCode];
     if (!room || !room.players[socket.id]) return;
+
+    if (!room.queue) room.queue = [];
     if (!room.queue.includes(socket.id)) room.queue.push(socket.id);
+
     io.to(socket.roomCode).emit("updateQueue", room.players, room.queue);
   });
 
+  // --- Second ready in queue: mark ready to start ---
   socket.on("startPressed", () => {
     const room = rooms[socket.roomCode];
     if (!room || !room.players[socket.id]) return;
@@ -180,15 +185,15 @@ io.on("connection", (socket) => {
     room.players[socket.id].startPressed = true;
     io.to(socket.roomCode).emit("updateQueue", room.players, room.queue);
 
-    const allPressed = room.queue.length > 1 &&
-                       room.queue.every(id => room.players[id].startPressed);
-    if (!room.gameStarted && allPressed) {
+    // --- Start game if everyone in queue pressed Ready the second time ---
+    const allReady = room.queue.length >= 2 && room.queue.every(id => room.players[id].startPressed);
+    if (!room.gameStarted && allReady) {
       room.gameStarted = true;
       room.playerOrder = [...room.queue];
       room.queue = [];
       room.currentPlayerIndex = -1;
       room.timer = startingTimer;
-      Object.values(room.players).forEach(p => { p.startPressed = false; p.ready = false; });
+      Object.values(room.players).forEach(p => { p.ready = false; p.startPressed = false; });
       nextTurn(socket.roomCode);
     }
   });
