@@ -1,159 +1,268 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Word Burst Buddies</title>
-<style>
-body {
-  font-family: "Arial", sans-serif;
-  margin: 0;
-  padding: 0;
-  background: linear-gradient(to right, #a1c4fd, #c2e9fb);
-  color: #333;
-}
-h1 {
-  text-align: center;
-  color: #ff4500;
-  margin-top: 20px;
-}
-input, button {
-  padding: 8px 12px;
-  margin: 5px;
-  font-size: 14px;
-  border-radius: 8px;
-  border: 2px solid #ff4500;
-}
-button {
-  cursor: pointer;
-}
-#playersList {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-li {
-  padding: 5px 0;
-  border-bottom: 1px solid #ddd;
-}
-li.active {
-  background: #d0f0d0;
-  font-weight: bold;
-}
-li.eliminated {
-  color: #999;
-  text-decoration: line-through;
-}
-#prompt {
-  font-size: 48px;
-  color: #ff4500;
-  font-weight: bold;
-  margin: 20px 0;
-}
-#timeLeft {
-  font-size: 32px;
-  color: #1e90ff;
-  font-weight: bold;
-  margin-bottom: 20px;
-}
-.main-container {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  gap: 20px;
-  max-width: 1200px;
-  margin: 0 auto;
-}
-#rulesPanel {
-  flex: 0 0 250px;
-  background: #fff0f5;
-  padding: 15px;
-  border-radius: 10px;
-  line-height: 1.5;
-}
-#gameArea {
-  flex: 1;
-  max-width: 600px;
-}
-#leaderboard {
-  flex: 0 0 250px;
-  background: #fff0f5;
-  padding: 15px;
-  border-radius: 10px;
-}
-#roomDisplay {
-  font-weight: bold;
-  margin-top: 10px;
-}
-#note {
-  font-size: 14px;
-  margin-top: 10px;
-  color: #333;
-}
-.rules-header {
-  font-weight: bold;
-  margin-bottom: 10px;
-  text-align: center;
-}
-</style>
-</head>
-<body>
+const express = require("express"); 
+const app = express();
+const http = require("http").createServer(app);
+const io = require("socket.io")(http);
+const fs = require("fs");
+const path = require("path");
 
-<h1>Word Burst Buddies</h1>
+app.use(express.static("public"));
 
-<div class="main-container">
+// Load English words
+let englishWords = new Set();
+fs.readFile(path.join(__dirname, "public", "words.txt"), "utf8", (err, data) => {
+  if (err) console.error("Error loading word list:", err);
+  else {
+    englishWords = new Set(data.split(/\r?\n/).map(w => w.toUpperCase()));
+    console.log("English words loaded:", englishWords.size);
+  }
+});
 
-  <!-- Rules panel -->
-  <div id="rulesPanel">
-    <div class="rules-header">Rules</div>
-    <ul>
-      <li>1. Make words with the letters shown.</li>
-      <li>2. Words must be 3 letters or more.</li>
-      <li>3. Include the prompt letters somewhere in your word.</li>
-      <li>4. Select the correct definition of your word.</li>
-      <li>5. Take turns typing your word.</li>
-      <li>6. You have 3 lives. Lose a life if the word is wrong.</li>
-      <li>7. Last person standing wins!</li>
-    </ul>
-    <p style="margin-top: 20px; font-weight: bold;">Have fun guys! - Davis G</p>
-    <p style="font-style: italic; font-size: 14px;">Remember, after each game, press "Join Random Game" for a new code! If a bug occurs, please reload your page.</p>
-  </div>
+// Leaderboard
+let leaderboard = {};
+const leaderboardPath = path.join(__dirname, "leaderboard.json");
+if (fs.existsSync(leaderboardPath)) {
+  leaderboard = JSON.parse(fs.readFileSync(leaderboardPath, "utf8"));
+} else {
+  fs.writeFileSync(leaderboardPath, JSON.stringify(leaderboard, null, 2));
+}
 
-  <!-- Lobby and game container -->
-  <div id="lobby">
-    <input id="nameInput" placeholder="Enter your name"/>
-    <input id="roomCodeInput" placeholder="Game code (optional)" maxlength="4"/>
-    <br>
-    <button id="joinBtn">Join Game</button>
-    <button id="randomBtn">Join Random Game</button>
-    <button id="readyBtn">Ready / Start Game</button>
-    <p id="roomDisplay"></p>
-  </div>
+// Game settings
+const startingTimer = 15;
+const minTimer = 5;
+const combos = [
+  "BA","CA","DA","MA","PA","RA","TA","BE","BI","BO","BU","LA","LE","LI","LO",
+  "AN","IN","ON","UN","BL","CL","FL","GL","PL","SL","BR","CR","DR","FR","GR",
+  "PR","TR","SC","SK","SL","SM","SN","SP","ST","SW","WH","WR"
+];
 
-  <div class="game-container" style="display:none;" id="gameContainer">
-    <div id="gameArea">
-      <h2>Current Prompt:</h2>
-      <div id="prompt">---</div>
-      <h3>Time Left: <span id="timeLeft">0</span> sec</h3>
-      <input id="wordInput" placeholder="Type a word (min 3 letters)" style="width:80%"/>
-      <button id="submitWordBtn">Submit Word</button>
+const rooms = {}; 
+let currentRandomRoom = null; 
 
-      <h2>Players</h2>
-      <ul id="playersList"></ul>
+function generateRoomCode() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  let code = "";
+  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
 
-      <div id="note">After each game, press "Join Random Game" or enter a code, then click Ready to play again.</div>
-    </div>
+// --- Start next turn ---
+function nextTurn(roomCode) {
+  const room = rooms[roomCode];
+  if (!room || !room.gameStarted || room.playerOrder.length === 0) return;
+  room.currentPlayerIndex = (room.currentPlayerIndex + 1) % room.playerOrder.length;
+  const activeId = room.playerOrder[room.currentPlayerIndex];
+  room.activePlayerId = activeId;
+  startPrompt(roomCode);
+}
 
-    <div id="leaderboard">
-      <!-- Leaderboards will render here -->
-    </div>
-  </div>
+function startPrompt(roomCode) {
+  const room = rooms[roomCode];
+  if (!room || !room.gameStarted || room.playerOrder.length === 0) return;
 
-</div> <!-- end main-container -->
+  room.currentPrompt = combos[Math.floor(Math.random() * combos.length)];
+  const activeId = room.playerOrder[room.currentPlayerIndex];
+  room.activePlayerId = activeId;
 
-<script src="/socket.io/socket.io.js"></script>
-<script src="script.js"></script>
-</body>
-</html>
+  io.to(roomCode).emit("newPrompt", {
+    prompt: room.currentPrompt,
+    timer: room.timer,
+    activePlayer: activeId
+  });
 
+  io.to(roomCode).emit("updatePlayers", room.players);
 
+  clearInterval(room.timerInterval);
+  let timeLeft = room.timer;
+  io.to(roomCode).emit("timer", timeLeft);
 
+  room.timerInterval = setInterval(() => {
+    timeLeft--;
+    io.to(roomCode).emit("timer", timeLeft);
+
+    if (timeLeft <= 0) {
+      clearInterval(room.timerInterval);
+
+      const player = room.players[activeId];
+      if (player) {
+        player.lives--;
+
+        // Notify the player who lost the life
+        const s = io.sockets.sockets.get(activeId);
+        if (s) {
+          s.emit("lifeLost", {
+            reason: "Time ran out!",
+            lives: player.lives
+          });
+        }
+
+        if (player.lives <= 0) {
+          delete room.players[activeId];
+          room.playerOrder = room.playerOrder.filter(id => id !== activeId);
+        }
+      }
+
+      io.to(roomCode).emit("updatePlayers", room.players);
+      checkWinner(roomCode);
+      nextTurn(roomCode);
+    }
+  }, 1000);
+}
+
+// --- Check winner and reset room ---
+function checkWinner(roomCode) {
+  const room = rooms[roomCode];
+  if (!room) return;
+
+  const remaining = Object.values(room.players).filter(p => p.lives > 0);
+
+  if (remaining.length === 1) {
+    const winner = remaining[0];
+
+    if (!leaderboard[winner.name]) leaderboard[winner.name] = { longestWord: 0, longestWordText: "", wins: 0 };
+    leaderboard[winner.name].wins += 1;
+    fs.writeFileSync(leaderboardPath, JSON.stringify(leaderboard, null, 2));
+
+    io.to(roomCode).emit("gameOver", { winner: winner.name, leaderboard });
+
+    // --- Reset room and players ---
+    room.gameStarted = false;
+    clearInterval(room.timerInterval);
+    Object.values(room.players).forEach(p => { p.ready = false; p.startPressed = false; });
+    Object.keys(room.players).forEach(id => {
+      const s = io.sockets.sockets.get(id);
+      if (s) s.roomCode = null;
+    });
+    room.queue = [];
+    room.playerOrder = [];
+    room.currentPlayerIndex = -1;
+
+    // Reset the random room code so a new game will have a fresh code
+    if (currentRandomRoom === roomCode) currentRandomRoom = null;
+  }
+}
+
+// --- Socket.io ---
+io.on("connection", (socket) => {
+  console.log("User connected", socket.id);
+
+  socket.on("joinRoom", ({ name, code, random }) => {
+    let roomCode;
+
+    if (random) {
+      if (!currentRandomRoom || rooms[currentRandomRoom].playerOrder.length >= 7) {
+        currentRandomRoom = generateRoomCode();
+        rooms[currentRandomRoom] = { players: {}, playerOrder: [], queue: [], gameStarted: false, timer: startingTimer };
+      }
+      roomCode = currentRandomRoom;
+    } else {
+      roomCode = code.toUpperCase();
+      if (!rooms[roomCode]) rooms[roomCode] = { players: {}, playerOrder: [], queue: [], gameStarted: false, timer: startingTimer };
+    }
+
+    socket.join(roomCode);
+    rooms[roomCode].players[socket.id] = { name, lives: 3, ready: false, startPressed: false };
+    socket.roomCode = roomCode;
+
+    io.to(socket.id).emit("lobbyInfo", { roomCode });
+    io.emit("leaderboardUpdate", leaderboard);
+  });
+
+  // --- First ready: join queue ---
+  socket.on("playerReady", () => {
+    const room = rooms[socket.roomCode];
+    if (!room || !room.players[socket.id]) return;
+
+    if (!room.queue) room.queue = [];
+    if (!room.queue.includes(socket.id)) room.queue.push(socket.id);
+
+    io.to(socket.roomCode).emit("updateQueue", room.players, room.queue);
+  });
+
+  // --- Second ready in queue: mark ready to start ---
+  socket.on("startPressed", () => {
+    const room = rooms[socket.roomCode];
+    if (!room || !room.players[socket.id]) return;
+
+    room.players[socket.id].startPressed = true;
+    io.to(socket.roomCode).emit("updateQueue", room.players, room.queue);
+
+    // --- Start game if everyone in queue pressed Ready the second time ---
+    const allReady = room.queue.length >= 2 && room.queue.every(id => room.players[id].startPressed);
+    if (!room.gameStarted && allReady) {
+
+      // --- Generate a new random room code for the next game ---
+      if (currentRandomRoom === room.socket?.roomCode || currentRandomRoom === socket.roomCode) {
+        currentRandomRoom = generateRoomCode();
+        rooms[currentRandomRoom] = { players: {}, playerOrder: [], queue: [], gameStarted: false, timer: startingTimer };
+      }
+
+      room.gameStarted = true;
+      room.playerOrder = [...room.queue];
+      room.queue = [];
+      room.currentPlayerIndex = -1;
+      room.timer = startingTimer;
+      Object.values(room.players).forEach(p => { p.ready = false; p.startPressed = false; });
+
+      nextTurn(socket.roomCode);
+    }
+  });
+
+  socket.on("submitWord", (word) => {
+    const room = rooms[socket.roomCode];
+    if (!room || !room.players[socket.id]) return;
+    const activeId = room.playerOrder[room.currentPlayerIndex];
+    if (socket.id !== activeId) return;
+
+    const player = room.players[socket.id];
+    const submittedWord = word.toUpperCase();
+
+    const tooShort = submittedWord.length < 3;
+    const missingCombo = !submittedWord.includes(room.currentPrompt);
+    const notEnglish = !englishWords.has(submittedWord);
+
+    if (tooShort || missingCombo || notEnglish) {
+      player.lives--;
+
+      socket.emit("lifeLost", {
+        reason: notEnglish ? "Not a valid English word" :
+                missingCombo ? `Must include: ${room.currentPrompt}` :
+                "Too short",
+        lives: player.lives
+      });
+
+      if (player.lives <= 0) {
+        delete room.players[socket.id];
+        room.playerOrder = room.playerOrder.filter(id => id !== socket.id);
+      }
+    } else {
+      if (!leaderboard[player.name]) leaderboard[player.name] = { longestWord: 0, longestWordText: "", wins: 0 };
+      if (submittedWord.length > leaderboard[player.name].longestWord) {
+        leaderboard[player.name].longestWord = submittedWord.length;
+        leaderboard[player.name].longestWordText = submittedWord;
+      }
+
+      // --- Dynamic timer shortening ---
+      const aliveCount = Object.values(room.players).filter(p => p.lives > 0).length;
+      room.timer = Math.max(minTimer, room.timer - 1 / aliveCount);
+    }
+
+    fs.writeFileSync(leaderboardPath, JSON.stringify(leaderboard, null, 2));
+
+    io.to(socket.roomCode).emit("updatePlayers", room.players);
+    io.emit("leaderboardUpdate", leaderboard);
+
+    checkWinner(socket.roomCode);
+    nextTurn(socket.roomCode);
+  });
+
+  socket.on("disconnect", () => {
+    const room = rooms[socket.roomCode];
+    if (!room) return;
+    delete room.players[socket.id];
+    room.playerOrder = room.playerOrder.filter(id => id !== socket.id);
+    room.queue = room.queue.filter(id => id !== socket.id);
+    io.to(socket.roomCode).emit("updateQueue", room.players, room.queue);
+  });
+});
+
+http.listen(3000, () => console.log("Server running on port 3000"));
